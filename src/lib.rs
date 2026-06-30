@@ -1,5 +1,5 @@
+use std::convert::{TryFrom, TryInto};
 use std::io::Error as IoError;
-use std::convert::TryFrom;
 use std::thread;
 use std::time::Duration;
 
@@ -14,8 +14,8 @@ extern crate image;
 use image::{DynamicImage, ImageBuffer, ImageError, Rgb};
 
 pub mod images;
-use crate::images::{apply_transform, encode_jpeg};
 pub use crate::images::{Colour, ImageOptions};
+use crate::images::{apply_transform, encode_jpeg};
 
 pub mod info;
 pub use info::*;
@@ -104,8 +104,8 @@ const AJAZZ_INTER_CHUNK_DELAY: Duration = Duration::from_millis(5);
 const AJAZZ_ACK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const AJAZZ_INPUT_MIN_LEN: usize = 10;
 const AJAZZ_USER_TO_DEVICE: [u8; 18] = [
-    0x0d, 0x0a, 0x07, 0x04, 0x01, 0x0e, 0x0b, 0x08, 0x05, 0x02, 0x0f, 0x0c, 0x09, 0x06, 0x03,
-    0x10, 0x11, 0x12,
+    0x0d, 0x0a, 0x07, 0x04, 0x01, 0x0e, 0x0b, 0x08, 0x05, 0x02, 0x0f, 0x0c, 0x09, 0x06, 0x03, 0x10,
+    0x11, 0x12,
 ];
 
 pub struct DeviceImage {
@@ -148,23 +148,11 @@ pub mod vids {
     pub const GK150K: u16 = 0x0c00;
 }
 
-impl StreamDeck {
-    /// Connect to a streamdeck device
-    pub fn connect(vid: u16, pid: u16, serial: Option<String>) -> Result<StreamDeck, Error> {
-        // Create new API
-        let api = HidApi::new()?;
-        StreamDeck::connect_with_hid(&api, vid, pid, serial)
-    }
+impl TryFrom<u16> for Kind {
+    type Error = Error;
 
-    /// Connect to a streamdeck device with an already initialise HidApi instance
-    pub fn connect_with_hid(
-        api: &HidApi,
-        vid: u16,
-        pid: u16,
-        serial: Option<String>,
-    ) -> Result<StreamDeck, Error> {
-        // Match info based on PID
-        let kind = match pid {
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        let kind = match value {
             pids::ORIGINAL => Kind::Original,
             pids::MINI => Kind::Mini,
 
@@ -181,6 +169,27 @@ impl StreamDeck {
 
             _ => return Err(Error::UnrecognisedPID),
         };
+        Ok(kind)
+    }
+}
+
+impl StreamDeck {
+    /// Connect to a streamdeck device
+    pub fn connect(vid: u16, pid: u16, serial: Option<String>) -> Result<StreamDeck, Error> {
+        // Create new API
+        let api = HidApi::new()?;
+        StreamDeck::connect_with_hid(&api, vid, pid, serial)
+    }
+
+    /// Connect to a streamdeck device with an already initialise HidApi instance
+    pub fn connect_with_hid(
+        api: &HidApi,
+        vid: u16,
+        pid: u16,
+        serial: Option<String>,
+    ) -> Result<StreamDeck, Error> {
+        // Match info based on PID
+        let kind = pid.try_into()?;
 
         debug!("Device info: {:?}", kind);
 
@@ -205,19 +214,19 @@ impl StreamDeck {
     /// Fetch the device manufacturer string
     pub fn manufacturer(&mut self) -> Result<String, Error> {
         let s = self.device.get_manufacturer_string()?;
-        Ok(s.unwrap())
+        Ok(s.unwrap_or_default())
     }
 
     /// Fetch the device product string
     pub fn product(&mut self) -> Result<String, Error> {
         let s = self.device.get_product_string()?;
-        Ok(s.unwrap())
+        Ok(s.unwrap_or_default())
     }
 
     /// Fetch the device serial
     pub fn serial(&mut self) -> Result<String, Error> {
         let s = self.device.get_serial_number_string()?;
-        Ok(s.unwrap())
+        Ok(s.unwrap_or_default())
     }
 
     /// Fetch the device firmware version
@@ -248,11 +257,7 @@ impl StreamDeck {
         } else {
             // Non-module devices
             let mut buff = [0u8; 17];
-            buff[0] = if self.kind.is_v2() {
-                0x05
-            } else {
-                0x04
-            };
+            buff[0] = if self.kind.is_v2() { 0x05 } else { 0x04 };
 
             let _s = self.device.get_feature_report(&mut buff)?;
 
@@ -332,9 +337,9 @@ impl StreamDeck {
         Ok(())
     }
 
-    /// Probe for connected devices. 
-    /// 
-    /// Returns a list of results, 
+    /// Probe for connected devices.
+    ///
+    /// Returns a list of results,
     /// each containing the device kind and PID or an error if the PID is unrecognised
     pub fn probe() -> Result<Vec<Result<(Kind, u16), Error>>, Error> {
         let api = HidApi::new()?;
@@ -351,12 +356,14 @@ impl StreamDeck {
                     pids::MODULE_6_KEYS => Ok((Kind::Module6Keys, pids::MODULE_6_KEYS)),
                     pids::MODULE_15_KEYS => Ok((Kind::Module15Keys, pids::MODULE_15_KEYS)),
                     pids::MODULE_32_KEYS => Ok((Kind::Module32Keys, pids::MODULE_32_KEYS)),
-                    _ => Err(Error::UnrecognisedPID)
+                    _ => Err(Error::UnrecognisedPID),
                 };
                 available_devices.push(deck);
             } else if matches!(device.vendor_id(), vids::AJAZZ | vids::GK150K) {
                 let deck = match device.product_id() {
-                    pids::AJAZZ_AKP153 | pids::GK150K => Ok((Kind::AjazzAkp153, device.product_id())),
+                    pids::AJAZZ_AKP153 | pids::GK150K => {
+                        Ok((Kind::AjazzAkp153, device.product_id()))
+                    }
                     _ => Err(Error::UnrecognisedPID),
                 };
                 available_devices.push(deck);
@@ -732,7 +739,10 @@ impl StreamDeck {
     /// warnings for unexpected data.
     fn drain_ajazz_ack(&mut self, timeout: Duration) -> Result<(), Error> {
         let mut buf = [0u8; AJAZZ_PACKET_SIZE];
-        let read = match self.device.read_timeout(&mut buf, timeout.as_millis() as i32) {
+        let read = match self
+            .device
+            .read_timeout(&mut buf, timeout.as_millis() as i32)
+        {
             Ok(n) => n,
             Err(error) => {
                 debug!("ack drain read error (non-fatal): {error}");
@@ -781,7 +791,7 @@ impl StreamDeck {
                     buf[3] = 0x00; // Reserved
                     buf[4] = if is_last { 0x01 } else { 0x00 }; // Show Image flag
                     buf[5] = key;
-                    buf[6..10].copy_from_slice(&[0x00,0x00,0x00,0x00]);
+                    buf[6..10].copy_from_slice(&[0x00, 0x00, 0x00, 0x00]);
                 }
                 // https://docs.elgato.com/streamdeck/hid/module-15_32#output-reports
                 // basically same as v2
@@ -795,8 +805,7 @@ impl StreamDeck {
                 }
                 _ => unreachable!(),
             }
-        }
-        else if self.kind.is_v2() {
+        } else if self.kind.is_v2() {
             buf[0] = 0x02;
             buf[1] = 0x07;
             buf[2] = key;

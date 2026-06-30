@@ -6,7 +6,7 @@ authors = ["ryan <ryan@kurte.nz>"]
 version = "0.10.0"
 readme = "README.md"
 license = "MPL-2.0"
-edition = "2018"
+edition = "2024"
 
 [features]
 util = [ "clap", "simplelog", "humantime" ]
